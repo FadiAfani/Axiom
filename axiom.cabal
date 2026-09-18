@@ -10,15 +10,14 @@ common shared
 library
   import:           shared
   hs-source-dirs:   src
-  exposed-modules:  Axiom.Syntax
-                    Axiom.Parser
-  build-depends:    megaparsec
+  exposed-modules:  Axiom.Parser, Axiom.Ast
+  build-depends:    megaparsec, containers >= 0.7, base >= 4.14 && < 5, mtl >= 2.3.1, parser-combinators >= 1.3.1
 
-executable mylang
+executable axiom
   import:           shared
   hs-source-dirs:   app
   main-is:          Main.hs
-  build-depends:    axiom
+  build-depends:    axiom, megaparsec
 
 test-suite tests
   import:           shared
