@@ -24,4 +24,5 @@ test-suite tests
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
-  build-depends:    axiom, tasty, tasty-hunit
+  other-modules:    Axiom.ParserTest
+  build-depends:    axiom, tasty, tasty-hunit, megaparsec, containers >= 0.7, mtl >= 2.3.1

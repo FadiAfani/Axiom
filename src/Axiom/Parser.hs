@@ -53,10 +53,10 @@ locate p = do
     pure $ f $ Span (fromJust $ Map.lookup srcName idMap) s e
 
 identifier :: Parser Identifier
-identifier = do
+identifier = lexeme $ locate $ do
     c <- letterChar
     rest <- many (number <|> name)
-    lexeme $ locate $ pure $ Identifier (T.cons c $ T.concat rest)
+    pure $ Identifier (T.cons c $ T.concat rest)
 
 typedVar :: Parser (Identifier, AxiomType)
 typedVar = do
@@ -66,24 +66,24 @@ typedVar = do
 
 -- type Example = Point(f32,f32) | Circle(f32)
 paramType :: Parser ParamType
-paramType = do
+paramType = locate $ do
     enum <- identifier
     args <- between
         (symbol "(")
         (symbol ")")
         (axiomType `sepBy1` symbol ",")
-    locate $ pure $ ParamType enum args
+    pure $ ParamType enum args
 
 structType :: Parser StructType
-structType = between (symbol "{") (symbol "}") $ do
+structType = locate $ between (symbol "{") (symbol "}") $ do
     vars <- typedVar `sepBy1` symbol ","
-    locate $ pure $ StructType vars
+    pure $ StructType vars
 
 refType :: Parser RefinementType
-refType = between (symbol "{") (symbol "}") $ do
+refType = locate $ between (symbol "{") (symbol "}") $ do
     (var, t) <- typedVar
     e <- expr
-    locate $ pure $ RefinementType var t e
+    pure $ RefinementType var t e
 
 expr :: Parser Expr
 expr = undefined

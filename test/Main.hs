@@ -1,2 +1,7 @@
+import Test.Tasty (defaultMain, testGroup)
+import qualified Axiom.ParserTest
+
 main :: IO ()
-main = pure ()
+main = defaultMain $ testGroup "Axiom"
+    [ Axiom.ParserTest.tests
+    ]
