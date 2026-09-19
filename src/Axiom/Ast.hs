@@ -22,22 +22,26 @@ data Identifier = Identifier {
     idSpan :: !Span
 } deriving (Show, Eq)
 
-data VariantType = VariantType {
+data ParamType = ParamType {
     const :: Identifier,
     params :: [AxiomType],
     varTSpan :: Span
 } deriving (Show, Eq)
 
+data SumType = SumType {
+    types :: [AtomicType],
+    sumTSpan :: Span
+} deriving (Show, Eq)
+
 data RefinementType = RefinementType {
     varName :: Identifier,
-    typeName :: Identifier,
-    pred :: [Expr],
+    typeName :: AxiomType,
+    pred :: Expr,
     refTSpan :: Span
 } deriving (Show, Eq)
 
 data StructType = StructType {
-    varNames :: [Identifier],
-    varTypes :: [Identifier],
+    typedVars :: [(Identifier, AxiomType)],
     structTSpan :: Span
 } deriving (Show, Eq)
 
@@ -48,7 +52,9 @@ data TypeBody = EnumType Identifier
 -- type Tuple = Integer(string) | Double(string)
 -- type Point = { x: int, y: int }
 -- type Nat = { n: int | n > 0 }
-data AxiomType = TRef RefinementType
-    | TVar VariantType
-    | StructT StructType
-    | EnumT Identifier deriving (Show, Eq)
+
+data AtomicType = TRef RefinementType
+    |   TStruct StructType
+    | TEnum Identifier deriving (Show, Eq)
+
+data AxiomType = TSum SumType deriving (Show, Eq)

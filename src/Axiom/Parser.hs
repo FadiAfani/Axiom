@@ -9,7 +9,7 @@ import Data.Map (Map)
 import Text.Megaparsec (Parsec, getInput, some, many, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
 import Text.Megaparsec.Char (space1, char, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Axiom.Ast (AxiomType (TVar, EnumT), VariantType (VariantType), Span (Span), Identifier (idSpan, Identifier))
+import Axiom.Ast (Expr, AtomicType (TEnum, TStruct, TRef), Span (Span), Identifier (idSpan, Identifier), StructType (StructType), RefinementType (RefinementType), ParamType (ParamType), SumType (SumType), AtomicType, AxiomType (TSum))
 import Control.Monad.Reader
 import Control.Monad.Combinators (between, sepBy1)
 import qualified Data.Text as T
@@ -58,15 +58,43 @@ identifier = do
     rest <- many (number <|> name)
     lexeme $ locate $ pure $ Identifier (T.cons c $ T.concat rest)
 
-tupleType :: Parser VariantType
-tupleType = do
+typedVar :: Parser (Identifier, AxiomType)
+typedVar = do
+    ident <- identifier <* symbol ":"
+    t <- axiomType
+    pure $ (ident, t)
+
+-- type Example = Point(f32,f32) | Circle(f32)
+paramType :: Parser ParamType
+paramType = do
     enum <- identifier
     args <- between
         (symbol "(")
         (symbol ")")
         (axiomType `sepBy1` symbol ",")
-    locate $ pure $ VariantType enum args
+    locate $ pure $ ParamType enum args
 
+structType :: Parser StructType
+structType = between (symbol "{") (symbol "}") $ do
+    vars <- typedVar `sepBy1` symbol ","
+    locate $ pure $ StructType vars
+
+refType :: Parser RefinementType
+refType = between (symbol "{") (symbol "}") $ do
+    (var, t) <- typedVar
+    e <- expr
+    locate $ pure $ RefinementType var t e
+
+expr :: Parser Expr
+expr = undefined
+
+sumType :: Parser SumType
+sumType = locate $ SumType <$> (atomicType `sepBy1` symbol "|")
+
+atomicType :: Parser AtomicType
+atomicType = (TEnum <$> identifier)
+    <|> (TStruct <$> structType)
+    <|> (TRef <$> refType)
 
 axiomType :: Parser AxiomType
-axiomType = (EnumT <$> identifier) <|> (TVar <$> tupleType)
+axiomType = TSum <$> sumType
