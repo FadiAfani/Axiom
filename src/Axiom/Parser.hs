@@ -7,11 +7,11 @@ import Data.Void (Void)
 import Control.Applicative ((<|>))
 import Data.Map (Map)
 import Text.Megaparsec (Parsec, getInput, some, many, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
-import Text.Megaparsec.Char (space1, char, alphaNumChar, letterChar, digitChar)
+import Text.Megaparsec.Char (space1, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Axiom.Ast (Expr, AtomicType (TEnum, TStruct, TRef), Span (Span), Identifier (idSpan, Identifier), StructType (StructType), RefinementType (RefinementType), ParamType (ParamType), SumType (SumType), AtomicType, AxiomType (TSum))
+import Axiom.Ast (spanOf, HasSpan, Expr, AtomicType (TEnum, TStruct, TRef), Span (Span), Identifier (idSpan, Identifier), StructType (StructType), RefinementType (RefinementType), ParamType (ParamType), SumType (SumType), AtomicType, AxiomType (TSum))
 import Control.Monad.Reader
-import Control.Monad.Combinators (between, sepBy1)
+import Control.Monad.Combinators (sepBy1)
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
@@ -30,6 +30,12 @@ lexeme = L.lexeme sc
 
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
+
+-- can't rely on nodes to capture start and end by themselves
+-- some symbol dont appear in the node body (e.g. '{' ',')
+-- this function assumes that responsibility 
+symbolSpan :: Text -> Parser Span
+symbolSpan t = lexeme $ locate (id <$ string t)
 
 integer :: Parser Int
 integer = lexeme L.decimal
@@ -55,41 +61,45 @@ locate p = do
 identifier :: Parser Identifier
 identifier = lexeme $ locate $ do
     c <- letterChar
-    rest <- many (number <|> name)
-    pure $ Identifier (T.cons c $ T.concat rest)
+    rest <- many alphaNumChar
+    pure $ Identifier (T.pack $ c : rest)
 
 typedVar :: Parser (Identifier, AxiomType)
 typedVar = do
     ident <- identifier <* symbol ":"
     t <- axiomType
-    pure $ (ident, t)
+    pure (ident, t)
 
 -- type Example = Point(f32,f32) | Circle(f32)
 paramType :: Parser ParamType
-paramType = locate $ do
+paramType = do
     enum <- identifier
-    args <- between
-        (symbol "(")
-        (symbol ")")
-        (axiomType `sepBy1` symbol ",")
-    pure $ ParamType enum args
+    args <- symbol "(" *> axiomType `sepBy1` symbol ","
+    close <- symbolSpan ")"
+    pure $ ParamType enum args (spanOf enum <> close)
 
 structType :: Parser StructType
-structType = locate $ between (symbol "{") (symbol "}") $ do
+structType = do
+    open <- symbolSpan "{"
     vars <- typedVar `sepBy1` symbol ","
-    pure $ StructType vars
+    close <- symbolSpan "}"
+    pure $ StructType vars (open <> close)
 
 refType :: Parser RefinementType
-refType = locate $ between (symbol "{") (symbol "}") $ do
+refType = do
+    open <- symbolSpan "{"
     (var, t) <- typedVar
     e <- expr
-    pure $ RefinementType var t e
+    close <- symbolSpan "}"
+    pure $ RefinementType var t e (open <> close)
 
 expr :: Parser Expr
 expr = undefined
 
 sumType :: Parser SumType
-sumType = locate $ SumType <$> (atomicType `sepBy1` symbol "|")
+sumType = do
+    types <- atomicType `sepBy1` symbol "|"
+    pure $ SumType types (foldr1 (<>) (map spanOf types))
 
 atomicType :: Parser AtomicType
 atomicType = (TEnum <$> identifier)

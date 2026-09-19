@@ -17,6 +17,28 @@ data Span = Span {
     endPos :: {-# UNPACK #-} !Int
 } deriving (Show, Eq)
 
+instance Semigroup Span where
+    (<>) :: Span -> Span -> Span
+    Span src s1 e1 <> Span _ s2 e2 = Span src (min s1 s2) (max e1 e2)
+
+class HasSpan a where
+    spanOf :: a -> Span
+
+instance HasSpan Span           where spanOf = id
+instance HasSpan Identifier     where spanOf = idSpan
+instance HasSpan StructType     where spanOf = structTSpan
+instance HasSpan SumType        where spanOf = sumTSpan
+instance HasSpan ParamType      where spanOf = varTSpan
+instance HasSpan RefinementType where spanOf = refTSpan
+
+instance HasSpan AtomicType where
+    spanOf (TEnum i)   = spanOf i
+    spanOf (TStruct s) = spanOf s
+    spanOf (TRef r)    = spanOf r
+
+instance HasSpan AxiomType where
+    spanOf (TSum s) = spanOf s 
+
 data Identifier = Identifier {
     idName :: !Text,
     idSpan :: !Span
