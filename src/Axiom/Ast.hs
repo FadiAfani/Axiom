@@ -4,13 +4,6 @@
 module Axiom.Ast where
 import Data.Text (Text)
 
-data Atom = Var Text
-    | StrLit Text
-    | IntLit Int
-    | FloatLit Double deriving (Show, Eq)
-
-data Expr = AtomExpr Atom deriving (Show, Eq)
-
 data Span = Span {
     srcIdx :: {-# UNPACK #-} !Int,
     startPos :: {-# UNPACK #-} !Int,
@@ -24,59 +17,44 @@ instance Semigroup Span where
 class HasSpan a where
     spanOf :: a -> Span
 
-instance HasSpan Span           where spanOf = id
-instance HasSpan Identifier     where spanOf = idSpan
-instance HasSpan StructType     where spanOf = structTSpan
-instance HasSpan SumType        where spanOf = sumTSpan
-instance HasSpan ParamType      where spanOf = varTSpan
-instance HasSpan RefinementType where spanOf = refTSpan
-
-instance HasSpan AtomicType where
-    spanOf (TEnum i)   = spanOf i
-    spanOf (TStruct s) = spanOf s
-    spanOf (TRef r)    = spanOf r
-
-instance HasSpan AxiomType where
-    spanOf (TSum s) = spanOf s 
+instance HasSpan Span       where spanOf = id
+instance HasSpan Identifier where spanOf = idSpan
+instance HasSpan Type       where spanOf = typeSpan
+instance HasSpan Expr       where spanOf = exprSpan
 
 data Identifier = Identifier {
     idName :: !Text,
     idSpan :: !Span
 } deriving (Show, Eq)
 
-data ParamType = ParamType {
-    const :: Identifier,
-    params :: [AxiomType],
-    varTSpan :: Span
-} deriving (Show, Eq)
-
-data SumType = SumType {
-    types :: [AtomicType],
-    sumTSpan :: Span
-} deriving (Show, Eq)
-
-data RefinementType = RefinementType {
-    varName :: Identifier,
-    typeName :: AxiomType,
-    pred :: Expr,
-    refTSpan :: Span
-} deriving (Show, Eq)
-
-data StructType = StructType {
-    typedVars :: [(Identifier, AxiomType)],
-    structTSpan :: Span
-} deriving (Show, Eq)
-
-data TypeBody = EnumType Identifier
-    | TupleType Text [Text]
-
 -- type Enum = Blue | Orange
 -- type Tuple = Integer(string) | Double(string)
 -- type Point = { x: int, y: int }
 -- type Nat = { n: int | n > 0 }
 
-data AtomicType = TRef RefinementType
-    |   TStruct StructType
-    | TEnum Identifier deriving (Show, Eq)
+data Type = Type {
+    typeKind :: TypeKind,
+    typeSpan :: Span
+} deriving (Show, Eq)
 
-data AxiomType = TSum SumType deriving (Show, Eq)
+data TypeKind = TEnum Identifier
+    | TParam Identifier [Type]
+    | TStruct [(Identifier, Type)]
+    | TRefine Identifier Type Expr
+    | TSum [Type] deriving (Show, Eq)
+
+data Expr = Expr {
+    exprKind :: ExprKind,
+    exprSpan :: Span
+} deriving (Show, Eq)
+
+data ExprKind = EAtom Atom
+    | BinExpr Op Expr Expr
+    | UnaryExpr Op Expr deriving (Show, Eq)
+
+data Atom = Var Identifier
+    | StrLit Text
+    | IntLit Int
+    | FloatLit Double deriving (Show, Eq)
+
+data Op = Plus | Minus | Mul | Div deriving (Show, Eq)

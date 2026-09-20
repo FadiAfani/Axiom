@@ -11,7 +11,7 @@ import Text.Megaparsec.Error (ParseErrorBundle)
 import Control.Monad.Reader (runReader)
 import Text.Megaparsec (runParserT, MonadParsec (eof))
 import qualified Data.Map as Map
-import Axiom.Ast (Identifier (Identifier), StructType (StructType), ParamType (ParamType), Span (Span), AxiomType (TSum), SumType (SumType), AtomicType (TEnum, TStruct))
+import Axiom.Ast (Identifier (Identifier), Span (Span), Type (Type), TypeKind (TEnum, TParam, TStruct, TSum))
 
 testEnv :: ParseEnv
 testEnv = ParseEnv {
@@ -32,11 +32,17 @@ sp = Span 0
 ident :: Text -> Int -> Int -> Identifier
 ident t s e = Identifier t (sp s e)
 
-enum :: Text -> Int -> Int -> AtomicType
-enum t s e = TEnum (ident t s e)
+enum :: Text -> Int -> Int -> Type
+enum t s e = Type (TEnum (ident t s e)) (sp s e)
 
-sumOf :: [AtomicType] -> Int -> Int -> AxiomType
-sumOf ts s e = TSum (SumType ts (sp s e))
+sumOf :: [Type] -> Int -> Int -> Type
+sumOf ts s e = Type (TSum ts) (sp s e)
+
+struct :: [(Identifier, Type)] -> Int -> Int -> Type
+struct vars s e = Type (TStruct vars) (sp s e)
+
+param :: Identifier -> [Type] -> Int -> Int -> Type
+param i args s e = Type (TParam i args) (sp s e)
 
 tests :: TestTree
 tests =
@@ -71,23 +77,23 @@ identifierTests =
 sumTypeTests :: TestTree
 sumTypeTests =
     testGroup "sumType"
-    [ testCase "single variant" $
-        runTestParser sumType "int" @?= Right (SumType [enum "int" 0 3] (sp 0 3))
+    [ testCase "single variant is not wrapped in a sum" $
+        runTestParser sumType "int" @?= Right (enum "int" 0 3)
     , testCase "multiple variants" $
         runTestParser sumType "A | B | C"
-            @?= Right (SumType [enum "A" 0 1, enum "B" 4 5, enum "C" 8 9] (sp 0 9))
+            @?= Right (sumOf [enum "A" 0 1, enum "B" 4 5, enum "C" 8 9] 0 9)
     , testCase "variants without spaces" $
         runTestParser sumType "Red|Green"
-            @?= Right (SumType [enum "Red" 0 3, enum "Green" 4 9] (sp 0 9))
+            @?= Right (sumOf [enum "Red" 0 3, enum "Green" 4 9] 0 9)
     , testCase "comments between variants" $
         runTestParser sumType "A // c\n| B"
-            @?= Right (SumType [enum "A" 0 1, enum "B" 9 10] (sp 0 10))
+            @?= Right (sumOf [enum "A" 0 1, enum "B" 9 10] 0 10)
     , testCase "struct variant" $
         runTestParser sumType "{x: int} | B"
-            @?= Right (SumType
-                [ TStruct $ StructType [(ident "x" 1 2, sumOf [enum "int" 4 7] 4 7)] (sp 0 8)
+            @?= Right (sumOf
+                [ struct [(ident "x" 1 2, enum "int" 4 7)] 0 8
                 , enum "B" 11 12
-                ] (sp 0 12))
+                ] 0 12)
     , testCase "rejects trailing bar" $
         parseFails sumType "A |"
     , testCase "rejects empty variant" $
@@ -99,31 +105,29 @@ structTypeTests =
     testGroup "structType"
     [ testCase "single field" $
         runTestParser structType "{x: int}"
-            @?= Right (StructType [(ident "x" 1 2, sumOf [enum "int" 4 7] 4 7)] (sp 0 8))
+            @?= Right (struct [(ident "x" 1 2, enum "int" 4 7)] 0 8)
     , testCase "multiple fields" $
         runTestParser structType "{x: int, y: int}"
-            @?= Right (StructType
-                [ (ident "x" 1 2, sumOf [enum "int" 4 7] 4 7)
-                , (ident "y" 9 10, sumOf [enum "int" 12 15] 12 15)
-                ] (sp 0 16))
+            @?= Right (struct
+                [ (ident "x" 1 2, enum "int" 4 7)
+                , (ident "y" 9 10, enum "int" 12 15)
+                ] 0 16)
     , testCase "whitespace inside braces" $
         runTestParser structType "{ x : int }"
-            @?= Right (StructType [(ident "x" 2 3, sumOf [enum "int" 6 9] 6 9)] (sp 0 11))
+            @?= Right (struct [(ident "x" 2 3, enum "int" 6 9)] 0 11)
     , testCase "span excludes trailing whitespace" $
         runTestParser structType "{x: int} "
-            @?= Right (StructType [(ident "x" 1 2, sumOf [enum "int" 4 7] 4 7)] (sp 0 8))
+            @?= Right (struct [(ident "x" 1 2, enum "int" 4 7)] 0 8)
     , testCase "sum type field" $
         runTestParser structType "{c: Red | Blue}"
-            @?= Right (StructType
+            @?= Right (struct
                 [(ident "c" 1 2, sumOf [enum "Red" 4 7, enum "Blue" 10 14] 4 14)]
-                (sp 0 15))
+                0 15)
     , testCase "nested struct field" $
         runTestParser structType "{p: {x: int}}"
-            @?= Right (StructType
-                [(ident "p" 1 2, sumOf
-                    [TStruct $ StructType [(ident "x" 5 6, sumOf [enum "int" 8 11] 8 11)] (sp 4 12)]
-                    4 12)]
-                (sp 0 13))
+            @?= Right (struct
+                [(ident "p" 1 2, struct [(ident "x" 5 6, enum "int" 8 11)] 4 12)]
+                0 13)
     , testCase "rejects empty struct" $
         parseFails structType "{}"
     , testCase "rejects trailing comma" $
@@ -139,18 +143,18 @@ paramTypeTests =
     testGroup "paramType"
     [ testCase "single parameter" $
         runTestParser paramType "Circle(f32)"
-            @?= Right (ParamType (ident "Circle" 0 6) [sumOf [enum "f32" 7 10] 7 10] (sp 0 11))
+            @?= Right (param (ident "Circle" 0 6) [enum "f32" 7 10] 0 11)
     , testCase "multiple parameters" $
         runTestParser paramType "Point(int, int)"
-            @?= Right (ParamType (ident "Point" 0 5)
-                [sumOf [enum "int" 6 9] 6 9, sumOf [enum "int" 11 14] 11 14]
-                (sp 0 15))
+            @?= Right (param (ident "Point" 0 5)
+                [enum "int" 6 9, enum "int" 11 14]
+                0 15)
     , testCase "sum type parameter" $
         runTestParser paramType "Opt(A | B)"
-            @?= Right (ParamType (ident "Opt" 0 3) [sumOf [enum "A" 4 5, enum "B" 8 9] 4 9] (sp 0 10))
+            @?= Right (param (ident "Opt" 0 3) [sumOf [enum "A" 4 5, enum "B" 8 9] 4 9] 0 10)
     , testCase "span excludes trailing whitespace" $
         runTestParser paramType "Circle(f32) "
-            @?= Right (ParamType (ident "Circle" 0 6) [sumOf [enum "f32" 7 10] 7 10] (sp 0 11))
+            @?= Right (param (ident "Circle" 0 6) [enum "f32" 7 10] 0 11)
     , testCase "rejects empty parameter list" $
         parseFails paramType "Point()"
     , testCase "rejects missing closing paren" $

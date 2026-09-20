@@ -9,7 +9,7 @@ import Data.Map (Map)
 import Text.Megaparsec (Parsec, getInput, some, many, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
 import Text.Megaparsec.Char (space1, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Axiom.Ast (spanOf, HasSpan, Expr, AtomicType (TEnum, TStruct, TRef), Span (Span), Identifier (idSpan, Identifier), StructType (StructType), RefinementType (RefinementType), ParamType (ParamType), SumType (SumType), AtomicType, AxiomType (TSum))
+import Axiom.Ast (spanOf, Expr, Span (Span), Identifier (Identifier), Type (Type), TypeKind (TEnum, TParam, TStruct, TRefine, TSum))
 import Control.Monad.Reader
 import Control.Monad.Combinators (sepBy1)
 import qualified Data.Text as T
@@ -64,47 +64,55 @@ identifier = lexeme $ locate $ do
     rest <- many alphaNumChar
     pure $ Identifier (T.pack $ c : rest)
 
-typedVar :: Parser (Identifier, AxiomType)
+typedVar :: Parser (Identifier, Type)
 typedVar = do
     ident <- identifier <* symbol ":"
     t <- axiomType
     pure (ident, t)
 
+enumType :: Parser Type
+enumType = do
+    ident <- identifier
+    pure $ Type (TEnum ident) (spanOf ident)
+
 -- type Example = Point(f32,f32) | Circle(f32)
-paramType :: Parser ParamType
+paramType :: Parser Type
 paramType = do
     enum <- identifier
     args <- symbol "(" *> axiomType `sepBy1` symbol ","
     close <- symbolSpan ")"
-    pure $ ParamType enum args (spanOf enum <> close)
+    pure $ Type (TParam enum args) (spanOf enum <> close)
 
-structType :: Parser StructType
+structType :: Parser Type
 structType = do
     open <- symbolSpan "{"
     vars <- typedVar `sepBy1` symbol ","
     close <- symbolSpan "}"
-    pure $ StructType vars (open <> close)
+    pure $ Type (TStruct vars) (open <> close)
 
-refType :: Parser RefinementType
+refType :: Parser Type
 refType = do
     open <- symbolSpan "{"
     (var, t) <- typedVar
     e <- expr
     close <- symbolSpan "}"
-    pure $ RefinementType var t e (open <> close)
+    pure $ Type (TRefine var t e) (open <> close)
 
 expr :: Parser Expr
 expr = undefined
 
-sumType :: Parser SumType
+-- a single variant is the type itself, not a one-element sum
+sumType :: Parser Type
 sumType = do
     types <- atomicType `sepBy1` symbol "|"
-    pure $ SumType types (foldr1 (<>) (map spanOf types))
+    pure $ case types of
+        [t] -> t
+        ts  -> Type (TSum ts) (foldr1 (<>) (map spanOf ts))
 
-atomicType :: Parser AtomicType
-atomicType = (TEnum <$> identifier)
-    <|> (TStruct <$> structType)
-    <|> (TRef <$> refType)
+atomicType :: Parser Type
+atomicType = enumType
+    <|> structType
+    <|> refType
 
-axiomType :: Parser AxiomType
-axiomType = TSum <$> sumType
+axiomType :: Parser Type
+axiomType = sumType
