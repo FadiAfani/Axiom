@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 module Axiom.Parser where
 
@@ -6,15 +7,16 @@ import Data.Text (Text)
 import Data.Void (Void)
 import Control.Applicative ((<|>))
 import Data.Map (Map)
-import Text.Megaparsec (Parsec, getInput, some, many, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
-import Text.Megaparsec.Char (space1, string, alphaNumChar, letterChar, digitChar)
+import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
+import Text.Megaparsec.Char (space1, char, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Axiom.Ast (spanOf, Expr, Span (Span), Identifier (Identifier), Type (Type), TypeKind (TEnum, TParam, TStruct, TRefine, TSum))
+import Axiom.Ast
 import Control.Monad.Reader
 import Control.Monad.Combinators (sepBy1)
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
+import Control.Monad.Combinators.Expr (Operator (InfixL, InfixR, Prefix), makeExprParser)
 
 data ParseEnv = ParseEnv {
     sourceIds :: Map String Int
@@ -33,9 +35,9 @@ symbol = L.symbol sc
 
 -- can't rely on nodes to capture start and end by themselves
 -- some symbol dont appear in the node body (e.g. '{' ',')
--- this function assumes that responsibility 
+-- this function assumes that responsibility
 symbolSpan :: Text -> Parser Span
-symbolSpan t = lexeme $ locate (id <$ string t)
+symbolSpan t = spanOf <$> lexeme (locate $ string t)
 
 integer :: Parser Int
 integer = lexeme L.decimal
@@ -49,39 +51,49 @@ name = lexeme $ fmap T.pack (some letterChar)
 number :: Parser Text
 number = lexeme $ T.pack <$> (some digitChar)
 
-locate :: Parser (Span -> a) -> Parser a
+-- locate wraps its argument, so put it inside the lexeme
+-- to keep trailing whitespace out of the span
+locate :: Parser a -> Parser (Spanned a)
 locate p = do
     srcName <- sourceName <$> getSourcePos
     idMap <- lift $ asks sourceIds
     s <- getOffset
-    f <- p
+    val <- p
     e <- getOffset
-    pure $ f $ Span (fromJust $ Map.lookup srcName idMap) s e
+    pure $ Spanned ( Span (fromJust $ Map.lookup srcName idMap) s e) val
 
-identifier :: Parser Identifier
-identifier = lexeme $ locate $ do
+-- Type keeps its span in its own field, so unwrap the Spanned here
+locateType :: Parser TypeKind -> Parser Type
+locateType p = do
+    Spanned sp kind <- lexeme $ locate p
+    pure $ Type kind sp
+
+-- unlexed, so callers can take a span that stops before trailing whitespace
+identifier' :: Parser Text
+identifier' = do
     c <- letterChar
     rest <- many alphaNumChar
-    pure $ Identifier (T.pack $ c : rest)
+    pure $ T.pack $ c : rest
 
-typedVar :: Parser (Identifier, Type)
+identifier :: Parser Text
+identifier = lexeme identifier'
+
+typedVar :: Parser (Text, Type)
 typedVar = do
     ident <- identifier <* symbol ":"
     t <- axiomType
     pure (ident, t)
 
 enumType :: Parser Type
-enumType = do
-    ident <- identifier
-    pure $ Type (TEnum ident) (spanOf ident)
+enumType = locateType $ TEnum <$> identifier'
 
 -- type Example = Point(f32,f32) | Circle(f32)
 paramType :: Parser Type
 paramType = do
-    enum <- identifier
+    enum <- lexeme $ locate identifier'
     args <- symbol "(" *> axiomType `sepBy1` symbol ","
     close <- symbolSpan ")"
-    pure $ Type (TParam enum args) (spanOf enum <> close)
+    pure $ Type (TParam (spanVal enum) args) (spanOf enum <> close)
 
 structType :: Parser Type
 structType = do
@@ -90,16 +102,17 @@ structType = do
     close <- symbolSpan "}"
     pure $ Type (TStruct vars) (open <> close)
 
+-- { n: int | n > 0 }
+-- the refined type is atomic: the bar belongs to the refinement, not to a sum
 refType :: Parser Type
 refType = do
     open <- symbolSpan "{"
-    (var, t) <- typedVar
+    var <- identifier <* symbol ":"
+    t <- atomicType
+    symbol "|"
     e <- expr
     close <- symbolSpan "}"
     pure $ Type (TRefine var t e) (open <> close)
-
-expr :: Parser Expr
-expr = undefined
 
 -- a single variant is the type itself, not a one-element sum
 sumType :: Parser Type
@@ -107,12 +120,96 @@ sumType = do
     types <- atomicType `sepBy1` symbol "|"
     pure $ case types of
         [t] -> t
-        ts  -> Type (TSum ts) (foldr1 (<>) (map spanOf ts))
+        ts  -> Type (TSum ts) (foldr1 (<>) (map typeSpan ts))
 
 atomicType :: Parser Type
-atomicType = enumType
-    <|> structType
+atomicType = try paramType
+    <|> enumType
+    <|> try structType
     <|> refType
 
 axiomType :: Parser Type
 axiomType = sumType
+
+binary :: Text -> BinOp -> Parser (Expr -> Expr -> Expr)
+binary s op = do
+    symbol s
+    pure $ \lhs rhs ->
+        Spanned {
+            spanVal = EBinary op lhs rhs,
+            spanOf = spanOf lhs <> spanOf rhs
+        }
+
+unary :: Text -> UnOp -> Parser (Expr -> Expr)
+unary s op = do
+    opSpan <- symbolSpan s
+    pure $ \e ->
+        Spanned {
+            spanVal = EUnary op e,
+            spanOf = opSpan <> spanOf e
+        }
+
+-- tightest first: the earlier the group, the tighter it binds.
+-- longer operators come before their prefixes (">=" before ">"),
+-- since symbol commits as soon as it matches
+operatorTable :: [[Operator Parser Expr]]
+operatorTable =
+    [
+        [
+            Prefix $ unary "!" Neg
+        ],
+        [
+            InfixR $ binary "^" Pow
+        ],
+        [
+            InfixL (binary "*" Mul),
+            InfixL (binary "/" Div)
+        ],
+        [
+            InfixL (binary "+" Plus),
+            InfixL (binary "-" Minus)
+        ],
+        [
+            InfixL (binary ">=" Bte),
+            InfixL (binary ">" Bt),
+            InfixL (binary "<=" Lte),
+            InfixL (binary "<" Lt),
+            InfixL (binary "==" Eq),
+            InfixL (binary "!=" Ne)
+        ],
+        [
+            InfixL (binary "&&" LogicAnd)
+        ],
+        [
+            InfixL (binary "||" LogicOr)
+        ]
+    ]
+
+
+grouped :: Parser Expr
+grouped = do
+    open <- symbolSpan "("
+    e <- expr
+    close <- symbolSpan ")"
+    pure $ Spanned {
+        spanVal = EGrouped e,
+        spanOf = open <> close
+    }
+
+-- unlexed, like identifier', so the atom's span stops at its last character
+atom :: Parser Atom
+atom = LFloat <$> try L.float
+    <|> LInt <$> L.decimal
+    <|> LStr <$> stringLit
+    <|> LVar <$> identifier'
+
+stringLit :: Parser Text
+stringLit = T.pack <$> (char '"' *> manyTill L.charLiteral (char '"'))
+
+-- probably a bad name
+atomicExpr :: Parser Expr
+atomicExpr = grouped
+    <|> lexeme (locate $ EAtom <$> atom)
+
+expr :: Parser Expr
+expr = makeExprParser atomicExpr operatorTable
