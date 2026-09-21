@@ -407,24 +407,24 @@ refTypeTests :: TestTree
 refTypeTests =
     testGroup "refType"
     [ testCase "refinement over an enum type" $
-        runTestParser refType "{ n: int | n > 0 }"
-            @?= Right (refine "n" (enum "int" 5 8)
-                (bin Bt (var "n" 11 12) (int 0 15 16))
-                0 18)
-    , testCase "refinement without padding" $
-        runTestParser refType "{n:int|n>0}"
+        runTestParser refType "n: int | n > 0"
             @?= Right (refine "n" (enum "int" 3 6)
-                (bin Bt (var "n" 7 8) (int 0 9 10))
-                0 11)
+                (bin Bt (var "n" 9 10) (int 0 13 14))
+                0 14)
+    , testCase "refinement without padding" $
+        runTestParser refType "n:int|n>0"
+            @?= Right (refine "n" (enum "int" 2 5)
+                (bin Bt (var "n" 6 7) (int 0 8 9))
+                0 9)
     , testCase "compound refinement predicate" $
-        runTestParser refType "{n: int | n > 0 && n < 10}"
-            @?= Right (refine "n" (enum "int" 4 7)
+        runTestParser refType "n: int | n > 0 && n < 10"
+            @?= Right (refine "n" (enum "int" 3 6)
                 (bin LogicAnd
-                    (bin Bt (var "n" 10 11) (int 0 14 15))
-                    (bin Lt (var "n" 19 20) (int 10 23 25)))
-                0 26)
+                    (bin Bt (var "n" 9 10) (int 0 13 14))
+                    (bin Lt (var "n" 18 19) (int 10 22 24)))
+                0 24)
     , testCase "rejects a missing predicate" $
-        parseFails refType "{n: int | }"
+        parseFails refType "n: int |"
     , testCase "rejects a missing bar" $
-        parseFails refType "{n: int n > 0}"
+        parseFails refType "n: int n > 0"
     ]

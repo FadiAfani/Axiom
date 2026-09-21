@@ -106,13 +106,11 @@ structType = do
 -- the refined type is atomic: the bar belongs to the refinement, not to a sum
 refType :: Parser Type
 refType = do
-    open <- symbolSpan "{"
-    var <- identifier <* symbol ":"
+    var <- lexeme $ locate $ identifier' <* symbol ":"
     t <- atomicType
     symbol "|"
     e <- expr
-    close <- symbolSpan "}"
-    pure $ Type (TRefine var t e) (open <> close)
+    pure $ Type (TRefine (spanVal var) t e) $ spanOf var <> spanOf e
 
 -- a single variant is the type itself, not a one-element sum
 sumType :: Parser Type
@@ -125,7 +123,7 @@ sumType = do
 atomicType :: Parser Type
 atomicType = try paramType
     <|> enumType
-    <|> try structType
+    <|> structType
     <|> refType
 
 axiomType :: Parser Type
