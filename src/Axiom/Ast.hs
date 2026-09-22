@@ -28,16 +28,15 @@ data Spanned a = Spanned {
 -- type Nat = { n: int | n > 0 }
 
 
-data Type = Type {
-    typeKind :: TypeKind,
-    typeSpan :: Span
-} deriving (Show, Eq)
+type Type = Spanned TypeKind
 
 data TypeKind = TEnum Text
     | TParam Text [Type]
     | TStruct [(Text, Type)]
-    | TRefine Text Type Expr
-    | TSum [Type] deriving (Show, Eq)
+    | TSum [Type] 
+    | TUniverse Text
+    | TAtom Text
+    deriving (Show, Eq)
 
 type Expr = Spanned ExprKind
 type Stmt = Spanned StmtKind

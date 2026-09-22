@@ -64,9 +64,7 @@ locate p = do
 
 -- Type keeps its span in its own field, so unwrap the Spanned here
 locateType :: Parser TypeKind -> Parser Type
-locateType p = do
-    Spanned sp kind <- lexeme $ locate p
-    pure $ Type kind sp
+locateType p = lexeme $ locate p
 
 -- unlexed, so callers can take a span that stops before trailing whitespace
 identifier' :: Parser Text
@@ -93,24 +91,14 @@ paramType = do
     enum <- lexeme $ locate identifier'
     args <- symbol "(" *> axiomType `sepBy1` symbol ","
     close <- symbolSpan ")"
-    pure $ Type (TParam (spanVal enum) args) (spanOf enum <> close)
+    pure $ Spanned (spanOf enum <> close) (TParam (spanVal enum) args)
 
 structType :: Parser Type
 structType = do
     open <- symbolSpan "{"
     vars <- typedVar `sepBy1` symbol ","
     close <- symbolSpan "}"
-    pure $ Type (TStruct vars) (open <> close)
-
--- { n: int | n > 0 }
--- the refined type is atomic: the bar belongs to the refinement, not to a sum
-refType :: Parser Type
-refType = do
-    var <- lexeme $ locate $ identifier' <* symbol ":"
-    t <- atomicType
-    symbol "|"
-    e <- expr
-    pure $ Type (TRefine (spanVal var) t e) $ spanOf var <> spanOf e
+    pure $ Spanned (open <> close) (TStruct vars)
 
 -- a single variant is the type itself, not a one-element sum
 sumType :: Parser Type
@@ -118,13 +106,12 @@ sumType = do
     types <- atomicType `sepBy1` symbol "|"
     pure $ case types of
         [t] -> t
-        ts  -> Type (TSum ts) (foldr1 (<>) (map typeSpan ts))
+        ts  -> Spanned (foldr1 (<>) (map spanOf ts)) (TSum ts) 
 
 atomicType :: Parser Type
 atomicType = try paramType
     <|> enumType
     <|> structType
-    <|> refType
 
 axiomType :: Parser Type
 axiomType = sumType
