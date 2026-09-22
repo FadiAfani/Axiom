@@ -18,7 +18,7 @@ instance Semigroup Span where
 data Spanned a = Spanned {
     spanOf :: !Span,
     spanVal :: !a
-} deriving (Show, Eq)
+} deriving (Show, Eq, Functor)
 
 -- names are bare Text: the enclosing node's span locates them
 

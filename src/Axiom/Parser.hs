@@ -5,9 +5,9 @@ module Axiom.Parser where
 
 import Data.Text (Text)
 import Data.Void (Void)
-import Control.Applicative ((<|>))
+import Control.Applicative ((<|>), optional)
 import Data.Map (Map)
-import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT)
+import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT, between)
 import Text.Megaparsec.Char (space1, char, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
 import Axiom.Ast
@@ -208,6 +208,34 @@ stringLit = T.pack <$> (char '"' *> manyTill L.charLiteral (char '"'))
 atomicExpr :: Parser Expr
 atomicExpr = grouped
     <|> lexeme (locate $ EAtom <$> atom)
+
+ifExpr :: Parser Expr
+ifExpr = do
+    s <- symbolSpan "if"
+    cond <- expr
+    action <- expr
+    elBlock <- optional expr
+    pure $ Spanned {
+        spanVal = EIf cond action elBlock,
+        spanOf = case elBlock of
+            Just e ->  s <> spanOf e
+            Nothing -> s <> spanOf action
+    }
+
+blockExpr :: Parser Expr
+blockExpr = do 
+    se <- locate $ between (symbol "{") (symbol "}") (many expr)
+    pure $ EBlock <$> se
+
+callExpr :: Parser Expr
+callExpr = do
+    ident <- lexeme $ locate identifier
+    params <- locate $ between (symbol "(") (symbol ")") $ expr `sepBy1` (symbol ",")
+    pure $ Spanned {
+        spanOf = (spanOf ident) <> (spanOf params),
+        spanVal = EFuncCall (spanVal ident) (spanVal params)
+    }
+
 
 expr :: Parser Expr
 expr = makeExprParser atomicExpr operatorTable
