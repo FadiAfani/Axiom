@@ -7,7 +7,7 @@ import Data.Text (Text)
 import Data.Void (Void)
 import Control.Applicative ((<|>), optional)
 import Data.Map (Map)
-import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT, between)
+import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT, between, sepBy)
 import Text.Megaparsec.Char (space1, char, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
 import Axiom.Ast
@@ -17,6 +17,7 @@ import qualified Data.Text as T
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Control.Monad.Combinators.Expr (Operator (InfixL, InfixR, Prefix), makeExprParser)
+import Data.Function (on)
 
 data ParseEnv = ParseEnv {
     sourceIds :: Map String Int
@@ -223,6 +224,104 @@ callExpr = do
         spanVal = EFuncCall (spanVal ident) (spanVal params)
     }
 
+listIndex :: Parser Expr
+listIndex = do
+    ident <- lexeme $ locate identifier
+    e <- between (symbol "[") (symbol "]") expr
+    pure $ Spanned {
+        spanOf = (spanOf ident) <> (spanOf e),
+        spanVal = EListIndex (spanVal ident) e
+    }
+
+fieldAcess :: Parser Expr
+fieldAcess = do
+    e <- expr
+    ident <- lexeme $ locate identifier
+    return Spanned {
+        spanOf = (spanOf e) <> (spanOf ident),
+        spanVal = EFieldAccess e (spanVal ident)
+    }
+
+range :: Parser Expr
+range = do
+    e1 <- expr
+    symbol ".."
+    e2 <- expr
+    pure $ Spanned {
+        spanOf = spanOf e1 <> spanOf e2,
+        spanVal = ERange e1 e2
+    }
+
+while :: Parser Expr
+while = do
+    e1 <- expr
+    e2 <- expr
+    pure $ Spanned {
+        spanOf = spanOf e1 <> spanOf e2,
+        spanVal = EWhile e1 e2
+    }
+
+for :: Parser Expr
+for = undefined
 
 expr :: Parser Expr
 expr = makeExprParser atomicExpr operatorTable
+
+
+parsePattern :: Parser Pattern
+parsePattern = orPat 
+
+bindPat :: Parser Pattern
+bindPat = locate $ PBind <$> identifier'
+
+listPat :: Parser Pattern
+listPat = do
+    open <- symbolSpan "["
+    pat <- parsePattern `sepBy` symbol ","
+    close <- symbolSpan "]"
+    return $ Spanned {
+        spanOf = open <> close,
+        spanVal = PList pat
+    }
+
+
+tuplePat :: Parser Pattern
+tuplePat = do
+    open <- symbolSpan "("
+    pat <- parsePattern `sepBy` symbol ","
+    close <- symbolSpan ")"
+    return $ Spanned {
+        spanOf = open <> close,
+        spanVal = PTuple pat
+    }
+
+orPat :: Parser Pattern
+orPat = do 
+    pats <- parsePattern `sepBy1` symbol "|"
+    let f = head pats
+    let l = last pats
+    pure $ Spanned {
+        spanOf = spanOf f <> spanOf l,
+        spanVal = POr pats
+    }
+
+litPat :: Parser Pattern
+litPat = (lexeme . locate) $  PLit <$> atom
+
+variantPat :: Parser Pattern
+variantPat = do
+    ident <- lexeme $ locate identifier'
+    pats <- tuplePat
+    let (PTuple ps) = spanVal pats
+    pure $ Spanned {
+        spanOf = spanOf ident <> spanOf pats,
+        spanVal = PVariant (spanVal ident)  ps
+    }
+
+wildcardPat :: Parser Pattern
+wildcardPat = do 
+    s <- symbolSpan "_"
+    pure $ Spanned {
+        spanOf = s,
+        spanVal = PWildCard
+    }

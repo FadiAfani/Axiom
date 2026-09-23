@@ -34,19 +34,20 @@ data TypeKind = TEnum Text
     | TParam Text [Type]
     | TStruct [(Text, Type)]
     | TSum [Type] 
-    | TUniverse Text
     | TAtom Text
     deriving (Show, Eq)
 
 type Expr = Spanned ExprKind
 type Stmt = Spanned StmtKind
+type Pattern = Spanned PatternKind
+
 
 
 -- x
 -- [x, y, { a, b }]
 -- { x, y }, { x: [a, b] }
 -- 400 | 403
-data Pattern = PBind Text 
+data PatternKind = PBind Text 
     | PList [Pattern]
     | PTuple [Pattern]
     | PStruct Text [(Text, Pattern)]
