@@ -7,7 +7,7 @@ import Data.Text (Text)
 import Data.Void (Void)
 import Control.Applicative ((<|>), optional)
 import Data.Map (Map)
-import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT, between, sepBy)
+import Text.Megaparsec (some, many, try, manyTill, getSourcePos, getOffset, SourcePos (sourceName), ParsecT, between, sepBy, choice, chunk, MonadParsec (notFollowedBy), satisfy)
 import Text.Megaparsec.Char (space1, char, string, alphaNumChar, letterChar, digitChar)
 import Text.Megaparsec.Char.Lexer qualified as L
 import Axiom.Ast
@@ -18,6 +18,8 @@ import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Control.Monad.Combinators.Expr (Operator (InfixL, InfixR, Prefix), makeExprParser)
 import Data.Function (on)
+import Data.Char
+import qualified Text.Megaparsec.Char (char )
 
 data ParseEnv = ParseEnv {
     sourceIds :: Map String Int
@@ -34,6 +36,9 @@ lexeme = L.lexeme sc
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
 
+symbol' :: Text -> Parser Text
+symbol' = chunk
+
 -- can't rely on nodes to capture start and end by themselves
 -- some symbol dont appear in the node body (e.g. '{' ',')
 -- this function assumes that responsibility
@@ -46,11 +51,9 @@ integer = lexeme L.decimal
 float :: Parser Double
 float = lexeme L.float
 
-name :: Parser Text
-name = lexeme $ fmap T.pack (some letterChar)
 
-number :: Parser Text
-number = lexeme $ T.pack <$> (some digitChar)
+keyword :: Text -> Parser Text
+keyword kw = lexeme $ try (string kw <* notFollowedBy (satisfy (not . isSpace)))
 
 -- locate wraps its argument, so put it inside the lexeme
 -- to keep trailing whitespace out of the span
@@ -199,26 +202,28 @@ atomicExpr = grouped
 
 ifExpr :: Parser Expr
 ifExpr = do
-    s <- symbolSpan "if"
+    s <- locate $ keyword "if"
     cond <- expr
-    action <- expr
-    elBlock <- optional expr
+    action <- keyword "then" *> expr
+    elBlock <- optional $ keyword "else" *> (ifExpr <|> expr)
     pure $ Spanned {
         spanVal = EIf cond action elBlock,
         spanOf = case elBlock of
-            Just e ->  s <> spanOf e
-            Nothing -> s <> spanOf action
+            Just e ->  spanOf s <> spanOf e
+            Nothing -> spanOf s <> spanOf action
     }
 
 blockExpr :: Parser Expr
 blockExpr = do 
-    se <- locate $ between (symbol "{") (symbol "}") (many expr)
+    -- use lexeme to skip space since symbol' doesn't 
+    se <- lexeme . locate $ between (symbol "{") (symbol' "}") (many expr)
     pure $ EBlock <$> se
 
 callExpr :: Parser Expr
 callExpr = do
     ident <- lexeme $ locate identifier
-    params <- locate $ between (symbol "(") (symbol ")") $ expr `sepBy1` (symbol ",")
+    -- use lexeme to skip space since symbol' doesn't 
+    params <- lexeme . locate $ between (symbol "(") (symbol' ")") $ expr `sepBy1` (symbol ",")
     pure $ Spanned {
         spanOf = (spanOf ident) <> (spanOf params),
         spanVal = EFuncCall (spanVal ident) (spanVal params)
@@ -227,16 +232,16 @@ callExpr = do
 listIndex :: Parser Expr
 listIndex = do
     ident <- lexeme $ locate identifier
-    e <- between (symbol "[") (symbol "]") expr
+    e <- lexeme . locate $ between (symbol "[") (symbol' "]") expr
     pure $ Spanned {
         spanOf = (spanOf ident) <> (spanOf e),
-        spanVal = EListIndex (spanVal ident) e
+        spanVal = EListIndex (spanVal ident) (spanVal e)
     }
 
-fieldAcess :: Parser Expr
-fieldAcess = do
+fieldAccess :: Parser Expr
+fieldAccess = do
     e <- expr
-    ident <- lexeme $ locate identifier
+    ident <- (char '.') *> (lexeme $ locate identifier')
     return Spanned {
         spanOf = (spanOf e) <> (spanOf ident),
         spanVal = EFieldAccess e (spanVal ident)
@@ -254,10 +259,12 @@ range = do
 
 while :: Parser Expr
 while = do
+    kw <- locate $ keyword "while"
     e1 <- expr
+    lexeme $ keyword "do"
     e2 <- expr
     pure $ Spanned {
-        spanOf = spanOf e1 <> spanOf e2,
+        spanOf = spanOf kw <> spanOf e2,
         spanVal = EWhile e1 e2
     }
 
@@ -267,12 +274,6 @@ for = undefined
 expr :: Parser Expr
 expr = makeExprParser atomicExpr operatorTable
 
-
-parsePattern :: Parser Pattern
-parsePattern = orPat 
-
-bindPat :: Parser Pattern
-bindPat = locate $ PBind <$> identifier'
 
 listPat :: Parser Pattern
 listPat = do
@@ -295,15 +296,6 @@ tuplePat = do
         spanVal = PTuple pat
     }
 
-orPat :: Parser Pattern
-orPat = do 
-    pats <- parsePattern `sepBy1` symbol "|"
-    let f = head pats
-    let l = last pats
-    pure $ Spanned {
-        spanOf = spanOf f <> spanOf l,
-        spanVal = POr pats
-    }
 
 litPat :: Parser Pattern
 litPat = (lexeme . locate) $  PLit <$> atom
@@ -318,6 +310,17 @@ variantPat = do
         spanVal = PVariant (spanVal ident)  ps
     }
 
+-- TODO: handle ordered destructuring
+structPat :: Parser Pattern
+structPat = do
+    open <- symbolSpan "{"
+    pats <- ((,) <$> (identifier <* symbol ":") <*> parsePattern) `sepBy` (symbol ",")
+    close <- symbolSpan "}"
+    pure $ Spanned {
+        spanOf = open <> close,
+        spanVal = PStruct pats
+    }
+
 wildcardPat :: Parser Pattern
 wildcardPat = do 
     s <- symbolSpan "_"
@@ -325,3 +328,32 @@ wildcardPat = do
         spanOf = s,
         spanVal = PWildCard
     }
+
+atomicPat :: Parser Pattern
+atomicPat = litPat <|> wildcardPat
+
+complexPat :: Parser Pattern
+complexPat = choice [
+    listPat,
+    tuplePat,
+    structPat,
+    try variantPat,
+    atomicPat -- this should be last as its the simplest
+    ]
+
+orPat :: Parser Pattern
+orPat = do 
+    pats <- complexPat `sepBy1` (symbol "|")
+    let f = head pats
+    let l = last pats
+    pure $ Spanned {
+        spanOf = spanOf f <> spanOf l,
+        spanVal = POr pats
+    }
+
+parsePattern :: Parser Pattern
+parsePattern = do
+    pats <- orPat
+    pure $ case spanVal pats of
+        POr [p] -> p
+        _ -> pats

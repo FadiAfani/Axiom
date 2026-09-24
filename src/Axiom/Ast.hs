@@ -50,7 +50,7 @@ type Pattern = Spanned PatternKind
 data PatternKind = PBind Text 
     | PList [Pattern]
     | PTuple [Pattern]
-    | PStruct Text [(Text, Pattern)]
+    | PStruct [(Text, Pattern)]
     | POr [Pattern]
     | PLit Atom
     | PVariant Text [Pattern]
