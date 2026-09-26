@@ -73,6 +73,7 @@ data ExprKind = EAtom Atom
     | ERange Expr Expr 
     | EFor Pattern Expr
     | EWhile Expr Expr
+    | EMatch Expr [(Pattern, Expr)]
     deriving (Show, Eq)
 
 data Atom = LVar Text

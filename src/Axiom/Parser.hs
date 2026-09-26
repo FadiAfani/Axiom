@@ -271,6 +271,23 @@ while = do
 for :: Parser Expr
 for = undefined
 
+match :: Parser Expr
+match = do
+    kw <- locate $ keyword "match"
+    e <- expr
+    matchCases <- locate $ between (symbol "{") (symbol' "}") $ many parseCase
+    pure $ Spanned {
+        spanOf = spanOf kw <> spanOf matchCases,
+        spanVal = EMatch e $ spanVal matchCases
+    }
+    where
+        parseCase :: Parser (Pattern, Expr)
+        parseCase = do
+            pat <- parsePattern
+            symbol "->"
+            e <- expr
+            pure (pat, e)
+
 expr :: Parser Expr
 expr = makeExprParser atomicExpr operatorTable
 
